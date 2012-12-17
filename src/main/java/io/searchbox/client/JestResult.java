@@ -122,7 +122,7 @@ public class JestResult {
         return (T) objectList;
     }
 
-    protected Object extractSource() {
+    public Object extractSource() {
         List<Object> sourceList = new ArrayList<Object>();
         if (jsonMap == null) return sourceList;
         String[] keys = getKeys();
