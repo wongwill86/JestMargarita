@@ -1,7 +1,11 @@
 package io.searchbox.client;
 
-import com.google.gson.Gson;
 import io.searchbox.annotations.JestId;
+
+import java.io.InvalidObjectException;
+import java.lang.reflect.Field;
+import java.util.*;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -10,6 +14,7 @@ import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import com.google.gson.Gson;
 
 /**
  * @author Dogukan Sonmez
@@ -123,41 +128,72 @@ public class JestResult {
     }
 
     public Object extractSource() {
+        return extractSourceFromPath(getKeys());
+    }
+
+    /**
+     * Drill down through the jsonMapObject via the path given ( delimited by / ).
+     * 
+     * 
+     * Note: the last token from the delimited path will be used to traverse the final object or objects found
+     *      i.e. hits/hits/_source will drill down the path until second to last node ( hits/hits ) 
+     *          and analyze the next drill down object
+     *          if the next drildown object is a Map, it will try to access the map's value for "_source"
+     *          if the next drilldown object is a List, it will try to traverse every object within that list
+     *              for the value of "_source" ( if the object is not a map, then we do not add it to our results)
+     *              
+     *      Logic refactored from extractSource()
+     *      
+     * @param path
+     * @return a list of the objects that we have found
+     */
+    public List<Object> extractSourceFromPath(String[] keys){
         List<Object> sourceList = new ArrayList<Object>();
-        if (jsonMap == null) return sourceList;
-        String[] keys = getKeys();
-        if (keys == null) {
+        if(jsonMap == null){
+            return sourceList;
+        }
+        if(keys == null){
             sourceList.add(jsonMap);
             return sourceList;
         }
-        String sourceKey = keys[keys.length - 1];
-        Object obj = jsonMap.get(keys[0]);
-        if (keys.length > 1) {
-            for (int i = 1; i < keys.length - 1; i++) {
-                obj = ((Map) obj).get(keys[i]);
+        
+        Object node = jsonMap;
+        try{
+            // drill down to 2nd to last node in path
+            for(int keyIndex = 0; keyIndex <= keys.length - 2; keyIndex++){
+                node = ((Map<String,Object>)node).get(keys[keyIndex]);
+                if(node == null){
+                    throw new InvalidObjectException(keys[keyIndex] + " not found");
+                }
             }
-            if (obj instanceof Map) {
-                Map<String, Object> source = (Map<String, Object>) ((Map) obj).get(sourceKey);
-                if (source != null) sourceList.add(source);
-            } else if (obj instanceof List) {
-                for (Object newObj : (List) obj) {
-                    if (newObj instanceof Map) {
-                        Map<String, Object> source = (Map<String, Object>) ((Map) newObj).get(sourceKey);
+            
+            String lastKey = keys[keys.length - 1];
+            
+            if(node instanceof Map){
+                Object endChild = ((Map<String,Object>) node).get(lastKey);
+                if(endChild != null){
+                    sourceList.add(endChild);
+                } else {
+                    throw new InvalidObjectException(lastKey + " not found");
+                }
+            }
+            
+            if(node instanceof List){
+                for (Object endChild : (List) node) {
+                    if (endChild instanceof Map) {
+                        Map<String, Object> source = (Map<String, Object>) ((Map<String,Object>) endChild).get(lastKey);
                         if (source != null) {
-                            source.put(ES_METADATA_ID, ((Map) newObj).get("_id"));
+                            source.put(ES_METADATA_ID, ((Map) endChild).get("_id"));
                             sourceList.add(source);
                         }
                     }
                 }
             }
-        } else {
-            if (obj != null) {
-                sourceList.add(obj);
-            }
+        } catch(InvalidObjectException e){
+            log.warn("The path <" + keys + "> could not be resolved from the jsonObject", e);
         }
         return sourceList;
     }
-
     protected String[] getKeys() {
         return pathToResult == null ? null : (pathToResult + "").split("/");
     }
